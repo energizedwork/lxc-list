@@ -1,0 +1,55 @@
+#!/usr/bin/env python
+import commands
+
+GREEN = '\033[92m'
+RED = '\033[91m'
+YELLOW = '\033[93m'
+ENDC = '\033[0m'
+
+expected_processes = ['sshd', 'agetty', 'syslog-ng', 'cron']
+
+def get_top_level_processes():
+	output = commands.getstatusoutput('lxc-ps --lxc -o pid -o comm -o ppid')[1]
+	procs = []
+	for proc in output.rstrip('\n').split('\n')[1:]:
+		fields = proc.split()
+		procs.append({'nodename': fields[0], 'pid': fields[1], 'procname': fields[2], 'ppid': fields[3]})
+	return procs
+
+def add_colour(s, col):
+	return col + s + ENDC
+
+def format_stat(stat):
+	if stat == 'running':
+		stat = add_colour(stat, GREEN)
+	elif stat == 'stopped':
+		stat = add_colour(stat, RED)
+	return stat
+
+def format_top_level_processes(allprocs, node_name):
+	procs = [proc for proc in allprocs if proc['nodename'] == node]
+	if len(procs) > 0:
+		initpid = [proc['pid'] for proc in procs if proc['procname'] == 'init'][0]
+		services = [proc['procname'] for proc in procs if proc['ppid'] == initpid]
+		expected_services = [service for service in services if service in expected_processes]
+		special_services = [service for service in services if not service in expected_processes]
+		return ', '.join([add_colour(s, YELLOW) for s in special_services] + expected_services)
+	else:
+		return ''
+
+
+# get a list of lxc nodes configured in /etc/lxc
+nodes = commands.getstatusoutput('grep utsname /etc/lxc/*.conf | sed "s/^.*utsname = //" | sort | uniq')[1].split('\n')
+
+# calculate output table based on max length of node names
+maxnodelen = max([len(node) for node in nodes])
+fmt = " %%-%ds | %%-7s | %%s" % (maxnodelen)
+
+# get status of each and print it out
+print fmt % ('NAME', 'STATUS', 'SERVICES')
+allprocs = get_top_level_processes()
+
+for node in nodes:
+    stat = commands.getstatusoutput('lxc-info -q -n %s' % (node))[1].split(' ')[2].lower()
+    print fmt % (node, format_stat(stat), format_top_level_processes(allprocs, node))
+
